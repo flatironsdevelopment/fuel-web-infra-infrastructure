@@ -79,16 +79,3 @@ resource "aws_iam_role_policy" "flow_logs_policy" {
     }]
   })
 }
-
-resource "aws_cloudwatch_log_group" "flow_logs" {
-  name              = "/aws/vpc/flow-logs"
-  retention_in_days = 14
-}
-
-resource "aws_flow_log" "vpc" {
-  log_destination      = aws_cloudwatch_log_group.flow_logs.arn
-  iam_role_arn         = aws_iam_role.flow_logs_role.arn
-  traffic_type         = "ALL"
-  vpc_id               = module.vpc.vpc_id
-  log_destination_type = "cloud-watch-logs"
-}
