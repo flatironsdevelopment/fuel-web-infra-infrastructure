@@ -1,0 +1,98 @@
+name: Deploy REPLACEME image
+
+on:
+  push:
+    branches:
+      - BRANCHREPLACE
+
+env:
+  DEPLOY_ENV: |
+    ${{
+      github.ref_name == 'main' && 'production' ||
+      github.ref_name == 'staging' && 'staging' ||
+      github.ref_name == 'dev' && 'development'
+    }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Set Outputs
+        id: vars
+        run: echo "::set-output name=sha_short::$(git rev-parse --short HEAD)"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+            aws-region: ${{ secrets.AWS_REGION }}
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and tag REPLACEME image
+        uses: docker/build-push-action@v6.9.0
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.PROJECT_NAME }}-application
+          CURRENT_BRANCH: ${{ github.ref_name }}
+          IMAGE_SHA: ${{ steps.vars.outputs.sha_short }}
+        with:
+          context: ./
+          file: DOCKERFILE
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:REPLACEME-${{ steps.vars.outputs.sha_short }}
+          build-args: |
+            BUILDARGS
+      - name: Download existing ECS task definition
+        run: |
+          aws ecs describe-task-definition --task-definition REPLACEME --query taskDefinition > task-definition.json
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.PROJECT_NAME }}-application
+          CURRENT_BRANCH: ${{ github.ref_name }}
+          IMAGE_SHA: ${{ steps.vars.outputs.sha_short }}
+        with:
+          task-definition: task-definition.json
+          container-name: REPLACEME
+          image: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:REPLACEME-${{ steps.vars.outputs.sha_short }}
+      - name: Start GitHub Deployment
+        uses: bobheadxi/deployments@v1
+        id: deployment-start
+        with:
+          step: start
+          token: ${{ secrets.GITHUB_TOKEN }}
+          env: ${{ env.DEPLOY_ENV }}
+          ref: ${{ github.sha }}
+          desc: "Deploying REPLACEME image to ECS"
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: REPLACEME
+          cluster: ${{ secrets.PROJECT_NAME }}
+          wait-for-service-stability: true
+
+      - name: Finish GitHub Deployment
+        if: always()  # Ensures this runs even if previous step fails
+        uses: bobheadxi/deployments@v1
+        with:
+          step: finish
+          token: ${{ secrets.GITHUB_TOKEN }}
+          env: ${{ env.DEPLOY_ENV }}
+          status: ${{ job.status }}
+          deployment_id: ${{ steps.deployment-start.outputs.deployment_id }}
+

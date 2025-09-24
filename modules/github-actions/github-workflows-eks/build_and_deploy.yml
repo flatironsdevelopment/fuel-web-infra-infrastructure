@@ -1,0 +1,79 @@
+name: Build and deploy process REPLACEME
+
+on:
+  push:
+    branches:
+      - staging
+      - main  
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Set Outputs
+        id: vars
+        run: echo "::set-output name=sha_short::$(git rev-parse --short HEAD)"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+            aws-region: ${{ secrets.AWS_REGION }}
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and tag docker image REPLACEME
+        uses: docker/build-push-action@v3
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.PROJECT_NAME }}-application
+          CURRENT_BRANCH: ${{ github.ref_name }}
+          IMAGE_SHA: ${{ steps.vars.outputs.sha_short }}
+        with:
+          context: ./
+          file: DOCKERFILE
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:REPLACEME-${{ env.IMAGE_SHA }}
+          build-args: |
+            BUILDARGS
+
+      - name: Checkout Helmcharts Repository
+        uses: actions/checkout@v3
+        with:
+          ref: 'main'
+          repository: ${{ secrets.REPO_NAME }}
+          path: helmcharts
+          token: ${{ secrets.ACCESS_TOKEN }}
+
+      - name: Update repository in the related HelmChart values.yaml REPLACEME
+        if: github.ref == 'refs/heads/staging'
+        uses: fjogeleit/yaml-update-action@main
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.PROJECT_NAME }}-application
+        with:
+          valueFile: "helmcharts/REPLACEME/values.yaml"
+          repository: ${{ secrets.REPO_NAME }}
+          branch: "main"
+          commitChange: true
+          updateFile: true
+          message: "Update Image Version to ${{ steps.vars.outputs.sha_short }}"
+          token: ${{ secrets.ACCESS_TOKEN }}
+          workdir: helmcharts
+          changes: |
+            {
+              "image.repository": "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}",
+              "image.tag": "REPLACEME-${{ steps.vars.outputs.sha_short }}",
+              "app_name": "REPLACEME",
+              "secret_manager_secret": "SECRETNAME"
+            }
